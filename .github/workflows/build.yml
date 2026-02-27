@@ -1,0 +1,46 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Kód letöltése
+        uses: actions/checkout@v4
+
+      - name: Node.js beállítása
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Függőségek telepítése
+        run: npm install
+
+      - name: EXE build
+        run: npm run build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: EXE feltöltése
+        uses: actions/upload-artifact@v4
+        with:
+          name: PantszalagMonitor-Windows
+          path: dist/PantszalagMonitor.exe
+          retention-days: 30
+
+      - name: Release létrehozása
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Pántszalag Monitor v1.0.${{ github.run_number }}"
+          files: dist/PantszalagMonitor.exe
+          body: |
+            Töltsd le a PantszalagMonitor.exe fájlt és dupla kattintás!
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
