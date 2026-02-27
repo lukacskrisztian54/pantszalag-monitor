@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Kamera Pántszalag Monitor</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;600;800&display=swap');
+
+  :root {
+    --bg: #0a0c0e;
+    --panel: #111418;
+    --border: #1e2530;
+    --accent: #f0a500;
+    --ok: #00e676;
+    --warn: #ff3d3d;
+    --text: #c8d0dc;
+    --dim: #4a5568;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Barlow Condensed', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.05) 2px, rgba(0,0,0,0.05) 4px);
+    pointer-events: none; z-index: 9999;
+  }
+
+  @keyframes globalAlert {
+    0%,100% { box-shadow: inset 0 0 0px transparent; }
+    50% { box-shadow: inset 0 0 60px rgba(255,61,61,0.15); }
+  }
+  body.alerting { animation: globalAlert 0.5s infinite; }
+
+  /* ── HEADER ── */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+    background: var(--panel); flex-shrink: 0; z-index: 10;
+  }
+  .logo { font-size: 22px; color: var(--accent); }
+  .title-block h1 { font-size: 19px; font-weight: 800; letter-spacing: 3px; color: #fff; line-height: 1; }
+  .title-block p { font-size: 10px; color: var(--dim); letter-spacing: 2px; font-family: 'Share Tech Mono', monospace; }
+
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+
+  /* Globális riasztás banner */
+  .alert-banner {
+    display: none; align-items: center; gap: 10px;
+    background: rgba(255,61,61,0.15); border: 1px solid var(--warn);
+    padding: 6px 14px; font-weight: 700; font-size: 13px;
+    letter-spacing: 2px; color: var(--warn);
+  }
+  .alert-banner.visible { display: flex; animation: bannerPulse 0.5s infinite; }
+  @keyframes bannerPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+
+  .btn-add-cam {
+    background: var(--accent); color: #000;
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+    font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
+    padding: 7px 16px; border: none; cursor: pointer; transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .btn-add-cam:hover { background: #ffc233; }
+
+  .mute-btn {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--dim); padding: 6px 10px; font-size: 16px;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .mute-btn:hover { border-color: var(--text); color: var(--text); }
+  .mute-btn.muted { color: var(--warn); border-color: var(--warn); }
+
+  /* ── FŐVONAL ── */
+  .main-wrap {
+    display: flex; flex: 1; min-height: 0; overflow: hidden;
+  }
+
+  /* ── KAMERA RÁCS ── */
+  .cam-grid {
+    flex: 1; overflow-y: auto; padding: 16px;
+    display: grid;
+    gap: 14px;
+    align-content: start;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  }
+
+  /* ── EGYEDI KAMERA KÁRTYA ── */
+  .cam-card {
+    background: var(--panel); border: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    position: relative;
+  }
+  .cam-card.ok-state { border-color: var(--ok); box-shadow: 0 0 16px rgba(0,230,118,0.15); }
+  .cam-card.warn-state { border-color: var(--warn); box-shadow: 0 0 24px rgba(255,61,61,0.3); }
+
+  /* Kártya fejléc */
+  .card-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.3);
+  }
+  .cam-num {
+    font-family: 'Share Tech Mono', monospace; font-size: 11px;
+    color: var(--accent); letter-spacing: 1px; font-weight: bold;
+  }
+  .cam-name-input {
+    background: transparent; border: none; color: var(--text);
+    font-family: 'Barlow Condensed', sans-serif; font-size: 14px;
+    font-weight: 600; letter-spacing: 1px; outline: none;
+    flex: 1; cursor: text;
+  }
+  .cam-name-input:focus { color: #fff; }
+
+  .card-status {
+    display: flex; align-items: center; gap: 5px;
+    font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  }
+  .card-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+  .card-dot.live { background: var(--ok); box-shadow: 0 0 6px var(--ok); animation: blink 1s infinite; }
+  .card-dot.warn { background: var(--warn); box-shadow: 0 0 8px var(--warn); animation: blink 0.3s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .btn-remove {
+    background: transparent; border: none; color: var(--dim);
+    font-size: 16px; cursor: pointer; padding: 2px 6px;
+    transition: color 0.15s; line-height: 1;
+  }
+  .btn-remove:hover { color: var(--warn); }
+
+  /* Video terület */
+  .card-video-wrap {
+    position: relative; background: #000;
+    aspect-ratio: 16/9; overflow: hidden;
+  }
+  .card-video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* Scan vonal */
+  .card-scan { position: absolute; left:0; right:0; height:2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    top: 0; pointer-events: none; opacity: 0; }
+  .card-scan.active { opacity: 0.7; animation: scanMov 2s linear infinite; }
+  @keyframes scanMov { 0%{top:0%} 100%{top:100%} }
+
+  /* Hiba overlay */
+  .card-alert-overlay {
+    position: absolute; inset: 0;
+    background: rgba(255,61,61,0.12);
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none; opacity: 0; transition: opacity 0.2s;
+  }
+  .card-alert-overlay.visible { opacity: 1; animation: cardAlert 0.4s infinite; }
+  @keyframes cardAlert { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .card-alert-text {
+    font-size: 32px; font-weight: 800; letter-spacing: 4px;
+    color: var(--warn); text-shadow: 0 0 16px var(--warn);
+  }
+
+  /* Corners */
+  .cc { position: absolute; width:14px; height:14px; border-color:var(--accent); border-style:solid; transition: border-color 0.3s; }
+  .cc.tl { top:6px; left:6px; border-width:2px 0 0 2px; }
+  .cc.tr { top:6px; right:6px; border-width:2px 2px 0 0; }
+  .cc.bl { bottom:6px; left:6px; border-width:0 0 2px 2px; }
+  .cc.br { bottom:6px; right:6px; border-width:0 2px 2px 0; }
+  .warn-state .cc { border-color: var(--warn); }
+  .ok-state .cc { border-color: var(--ok); }
+
+  /* Progress bar */
+  .card-progress { height:2px; background:var(--border); overflow:hidden; }
+  .card-progress-fill { height:100%; background:var(--accent); width:0%; }
+  .card-progress-fill.running { animation: progAnim 2s linear infinite; }
+  @keyframes progAnim { 0%{width:0%;margin-left:0%} 50%{width:60%;} 100%{width:0%;margin-left:100%} }
+
+  /* Kártya alap infó */
+  .card-info {
+    padding: 10px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px;
+  }
+
+  .verdict-mini {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 16px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase;
+  }
+  .verdict-mini.ok { color: var(--ok); }
+  .verdict-mini.warn { color: var(--warn); }
+  .verdict-mini.neutral { color: var(--dim); }
+
+  .conf-mini {
+    font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--dim);
+    text-align: right;
+  }
+
+  .card-desc {
+    padding: 0 12px 8px; font-size: 12px; color: var(--dim);
+    font-family: 'Share Tech Mono', monospace; min-height: 18px;
+    line-height: 1.4;
+  }
+
+  /* Kamera választó legördülő */
+  .card-select-wrap { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+  .card-select-wrap select {
+    flex: 1; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); padding: 5px 8px;
+    font-family: 'Share Tech Mono', monospace; font-size: 11px; outline: none;
+  }
+  .btn-cam-start {
+    background: var(--accent); color: #000;
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+    font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+    padding: 5px 12px; border: none; cursor: pointer; white-space: nowrap;
+  }
+  .btn-cam-start:hover { background: #ffc233; }
+  .btn-cam-stop {
+    background: transparent; color: var(--warn); border: 1px solid var(--warn);
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+    font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+    padding: 5px 12px; cursor: pointer;
+  }
+
+  /* Placeholder */
+  .cam-placeholder {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; color: var(--dim);
+  }
+  .cam-placeholder p { font-size: 11px; letter-spacing: 2px; font-family: 'Share Tech Mono', monospace; }
+
+  /* ── JOB SÁTOR ── */
+  .side-panel {
+    width: 280px; border-left: 1px solid var(--border);
+    background: var(--panel); display: flex; flex-direction: column;
+    overflow: hidden; flex-shrink: 0;
+  }
+
+  .side-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .sec-label { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--dim); letter-spacing: 3px; margin-bottom: 10px; }
+
+  /* Összesített statisztika */
+  .global-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .gs-item { border: 1px solid var(--border); padding: 8px 10px; }
+  .gs-val { font-size: 22px; font-weight: 800; font-family: 'Share Tech Mono', monospace; color: #fff; }
+  .gs-val.ok { color: var(--ok); }
+  .gs-val.warn { color: var(--warn); }
+  .gs-lbl { font-size: 9px; color: var(--dim); letter-spacing: 1px; margin-top: 1px; }
+
+  /* Kamera státusz lista */
+  .cam-status-list { flex: 1; overflow-y: auto; padding: 14px 16px; }
+  .csl-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 0; border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .csl-item:last-child { border: none; }
+  .csl-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .csl-dot.ok { background: var(--ok); }
+  .csl-dot.warn { background: var(--warn); animation: blink 0.4s infinite; }
+  .csl-dot.off { background: var(--dim); }
+  .csl-name { flex: 1; font-weight: 600; letter-spacing: 1px; }
+  .csl-state { font-family: 'Share Tech Mono', monospace; font-size: 10px; }
+  .csl-state.ok { color: var(--ok); }
+  .csl-state.warn { color: var(--warn); }
+  .csl-state.off { color: var(--dim); }
+
+  /* Előzmények */
+  .history-panel { flex: 1; overflow-y: auto; padding: 14px 16px; }
+  .hi-item {
+    display: grid; grid-template-columns: 46px 1fr 1fr;
+    align-items: center; gap: 6px;
+    padding: 5px 0; border-bottom: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .hi-item:last-child { border: none; }
+  .hi-time { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--dim); }
+  .hi-cam { font-size: 11px; color: var(--text); font-weight: 600; }
+  .hi-status { font-family: 'Share Tech Mono', monospace; font-size: 10px; font-weight: 700; text-align: right; }
+  .hi-status.ok { color: var(--ok); }
+  .hi-status.warn { color: var(--warn); }
+
+  /* API kulcs */
+  .api-block { padding: 10px 16px; border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+  .api-block label { font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--dim); letter-spacing: 2px; display: block; margin-bottom: 5px; }
+  .api-block input {
+    width: 100%; background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 8px;
+    font-family: 'Share Tech Mono', monospace; font-size: 11px; outline: none;
+  }
+  .api-block input:focus { border-color: var(--accent); }
+
+  /* Üres állapot */
+  .empty-state {
+    grid-column: 1/-1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; padding: 60px 20px; color: var(--dim); text-align: center;
+  }
+  .empty-state .big { font-size: 48px; opacity: 0.3; }
+  .empty-state p { font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: 2px; line-height: 1.8; }
+
+  @media (max-width: 700px) {
+    .side-panel { display: none; }
+    .cam-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⊞</div>
+  <div class="title-block">
+    <h1>MULTI-CAM MONITOR</h1>
+    <p>PÁNTSZALAG ELLENŐRZŐ // TÖBB KAMERA</p>
+  </div>
+  <div class="header-right">
+    <div class="alert-banner" id="alertBanner">
+      <span>⚠</span>
+      <span id="alertBannerText">HIBA ÉSZLELVE</span>
+    </div>
+    <button class="btn-add-cam" onclick="addCamera()">+ KAMERA HOZZÁADÁSA</button>
+    <button onclick="diagnosztika()" style="background:transparent;border:1px solid var(--dim);color:var(--dim);font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:12px;letter-spacing:1px;padding:7px 12px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--dim)';this.style.color='var(--dim)'" title="Kamerák diagnosztikája">🔍 DIAGNÓZIS</button>
+    <button class="mute-btn" id="muteBtn" onclick="toggleMute()">🔔</button>
+  </div>
+</header>
+
+<div class="main-wrap">
+
+  <!-- Kamera rács -->
+  <div class="cam-grid" id="camGrid">
+    <div class="empty-state" id="emptyState">
+      <div class="big">📷</div>
+      <p>Nincs még kamera hozzáadva.<br>Kattints a "+ KAMERA HOZZÁADÁSA" gombra<br>a jobb felső sarokban.</p>
+    </div>
+  </div>
+
+  <!-- Oldalsó panel -->
+  <aside class="side-panel">
+    <div class="side-section">
+      <div class="sec-label">// ÖSSZESÍTETT STATISZTIKA</div>
+      <div class="global-stats">
+        <div class="gs-item"><div class="gs-val" id="gTotal">0</div><div class="gs-lbl">ÖSSZES</div></div>
+        <div class="gs-item"><div class="gs-val ok" id="gOk">0</div><div class="gs-lbl">RENDBEN</div></div>
+        <div class="gs-item"><div class="gs-val warn" id="gWarn">0</div><div class="gs-lbl">HIBA</div></div>
+        <div class="gs-item"><div class="gs-val" id="gRate">—</div><div class="gs-lbl">HIBAARÁNY</div></div>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="sec-label">// KAMERA ÁLLAPOTOK</div>
+      <div id="camStatusList"><p style="font-size:11px;color:var(--dim);font-family:'Share Tech Mono',monospace">Nincs kamera.</p></div>
+    </div>
+
+    <div class="history-panel">
+      <div class="sec-label">// ELŐZMÉNYEK</div>
+      <div id="historyList"><p style="font-size:11px;color:var(--dim);font-family:'Share Tech Mono',monospace">Nincs adat.</p></div>
+    </div>
+
+    <div class="api-block">
+      <label>ANTHROPIC API KULCS</label>
+      <input type="password" id="apiKey" placeholder="sk-ant-..." oninput="localStorage.setItem('ak',this.value)">
+    </div>
+  </aside>
+
+</div>
+
+<canvas id="hiddenCap" style="display:none"></canvas>
+
+<script>
+// ── Globális állapot ──
+let cameras = {};      // id → {stream, interval, analyzing, result}
+let camCounter = 0;
+let muted = false;
+let globalStats = { total: 0, ok: 0, warn: 0 };
+const globalHistory = [];
+let availableDevices = [];
+let audioCtx = null;
+
+const INTERVAL_MS = 2000;
+
+// API kulcs betöltés
+const savedKey = localStorage.getItem('ak');
+if (savedKey) document.getElementById('apiKey').value = savedKey;
+
+// ── Hangjelzés ──
+function beep() {
+  if (muted) return;
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    [440, 440].forEach((f, i) => {
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.connect(g); g.connect(audioCtx.destination);
+      osc.type = 'square'; osc.frequency.value = f;
+      g.gain.setValueAtTime(0.25, audioCtx.currentTime + i * 0.3);
+      g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.3 + 0.25);
+      osc.start(audioCtx.currentTime + i * 0.3);
+      osc.stop(audioCtx.currentTime + i * 0.3 + 0.25);
+    });
+  } catch(e) {}
+}
+
+function toggleMute() {
+  muted = !muted;
+  const btn = document.getElementById('muteBtn');
+  btn.textContent = muted ? '🔕' : '🔔';
+  btn.classList.toggle('muted', muted);
+}
+
+// ── Eszközök lekérése ──
+// Trükk: minden kamerát egyenként nyitunk meg, hogy a böngésző label-t adjon vissza,
+// majd azonnal lezárjuk. Így az összes eszköz megjelenik névvel.
+// ── Kamera felsorolás ──
+// MEGBÍZHATÓ MÓDSZER: minden kamerát egyenként próbálunk megnyitni
+// facingMode és groupId alapján is megkülönböztetjük őket
+async function loadDevices() {
+  availableDevices = [];
+  try {
+    // Általános engedély
+    const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    tmp.getTracks().forEach(t => t.stop());
+    // Eszközlista
+    const all = await navigator.mediaDevices.enumerateDevices();
+    availableDevices = all.filter(d => d.kind === 'videoinput');
+    console.log('Talált videó eszközök:', availableDevices.length,
+      availableDevices.map((d,i) => `${i}: "${d.label||'?'}" id=${d.deviceId.substring(0,12)}`));
+  } catch(e) {
+    console.error('loadDevices hiba:', e);
+  }
+}
+
+// Oldal betöltésekor
+loadDevices();
+
+// ── Kamera hozzáadása ──
+async function addCamera() {
+  await loadDevices();
+
+  camCounter++;
+  const id = 'cam_' + camCounter;
+
+  cameras[id] = {
+    stream: null, interval: null, analyzing: false,
+    result: null, name: 'Kamera ' + camCounter,
+    stats: { total: 0, ok: 0, warn: 0 }
+  };
+
+  document.getElementById('emptyState')?.remove();
+
+  const card = document.createElement('div');
+  card.className = 'cam-card';
+  card.id = 'card_' + id;
+  card.innerHTML = buildCardHTML(id);
+  document.getElementById('camGrid').appendChild(card);
+
+  updateSidePanel();
+}
+
+function buildCardHTML(id) {
+  const num = id.replace('cam_', '');
+  return `
+    <div class="card-header">
+      <span class="cam-num">CAM-${num.padStart(2,'0')}</span>
+      <input class="cam-name-input" value="Kamera ${num}" 
+        onchange="cameras['${id}'].name=this.value; updateSidePanel();"
+        title="Kattints a névhez az átnevezéshez">
+      <div class="card-status">
+        <div class="card-dot" id="dot_${id}"></div>
+        <span id="dotText_${id}" style="font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim)">OFF</span>
+      </div>
+      <button class="btn-remove" onclick="removeCamera('${id}')" title="Kamera eltávolítása">✕</button>
+    </div>
+
+    <div class="card-video-wrap">
+      <div class="cam-placeholder" id="placeholder_${id}">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        <p>KAMERA INAKTÍV</p>
+      </div>
+      <video id="video_${id}" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:cover"></video>
+      <div class="card-scan" id="scan_${id}"></div>
+      <div class="card-alert-overlay" id="alertOv_${id}">
+        <div class="card-alert-text">⚠ HIBA</div>
+      </div>
+      <div class="cc tl"></div><div class="cc tr"></div>
+      <div class="cc bl"></div><div class="cc br"></div>
+    </div>
+
+    <div class="card-progress"><div class="card-progress-fill" id="prog_${id}"></div></div>
+
+    <div class="card-info">
+      <div class="verdict-mini neutral" id="verdict_${id}">— VÁRAKOZÁS</div>
+      <div class="conf-mini" id="conf_${id}">—</div>
+    </div>
+    <div class="card-desc" id="desc_${id}">Válassz kamerát és indítsd el.</div>
+
+    <div class="card-select-wrap">
+      <div id="camLabel_${id}" style="flex:1;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim);padding:4px 0;">Kamera kiválasztásához kattints START-ra</div>
+      <button class="btn-cam-start" id="startBtn_${id}" onclick="startCamera('${id}')">▶ START</button>
+    </div>
+  `;
+}
+
+function fillDeviceSelect(id) {
+  // Már nem szükséges - startCamera kezeli
+}
+
+// ── Kamera indítás ──
+// FILE:// módban a böngésző csak 1 kamerát mutat enumerateDevices-ban.
+// Megoldás: minden kártyánál külön getUserMedia hívás – a böngésző
+// felkínálja melyik kamerát engedje, vagy ha már volt engedély, sorban adja őket.
+// A trükk: minden egyes getUserMedia hívás KÜLÖN kamerát nyit meg ha az előző
+// már foglalt (Chrome viselkedés: nem adja ugyanazt kétszer).
+async function startCamera(id) {
+  const cam = cameras[id];
+  if (!cam) return;
+
+  // Összegyűjtjük a már futó streamek track-jeit hogy elkerüljük ugyanazt
+  const activeTrackIds = new Set();
+  Object.values(cameras).forEach(c => {
+    if (c.stream) c.stream.getVideoTracks().forEach(t => activeTrackIds.add(t.label));
+  });
+
+  let stream = null;
+  try {
+    // Egyszerű getUserMedia - Chrome file:// módban is működik
+    // Ha több kártya van, a Chrome automatikusan a következő szabad kamerát adja
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+
+    // Ellenőrizzük: nem ugyanazt a kamerát kaptuk-e mint egy másik kártya?
+    const newLabel = stream.getVideoTracks()[0]?.label || '';
+    if (activeTrackIds.has(newLabel)) {
+      // Ugyanazt kaptuk - próbáljuk explicit kérni a másikat
+      stream.getTracks().forEach(t => t.stop());
+      // Próbáljuk az összes ismert deviceId-t kivéve az aktívakat
+      const all = await navigator.mediaDevices.enumerateDevices();
+      const vids = all.filter(d => d.kind === 'videoinput');
+      let found = false;
+      for (const dev of vids) {
+        if (dev.deviceId && dev.deviceId !== '' && dev.deviceId !== 'default') {
+          try {
+            const s2 = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { exact: dev.deviceId }, width: { ideal: 1280 } },
+              audio: false
+            });
+            const label2 = s2.getVideoTracks()[0]?.label || '';
+            if (!activeTrackIds.has(label2)) {
+              stream = s2;
+              found = true;
+              break;
+            } else {
+              s2.getTracks().forEach(t => t.stop());
+            }
+          } catch(e) {}
+        }
+      }
+      if (!found) {
+        alert('Nem találtam szabad kamerát. Minden kamera már használatban van, vagy csak 1 kamera csatlakoztatott.');
+        return;
+      }
+    }
+    cam.stream = stream;
+    const video = document.getElementById('video_' + id);
+    video.srcObject = cam.stream;
+    video.style.display = 'block';
+    document.getElementById('placeholder_' + id).style.display = 'none';
+
+    // Megmutatjuk melyik kamera ténylegesen aktív
+    const activeTrack = cam.stream.getVideoTracks()[0];
+    if (activeTrack) {
+      const label = activeTrack.label || cam.name;
+      const shortLabel = label.length > 30 ? label.substring(0, 28) + '…' : label;
+      // Frissítjük a kártya nevét
+      const nameInput = document.querySelector('#card_' + id + ' .cam-name-input');
+      if (nameInput && nameInput.value.startsWith('Kamera ')) {
+        nameInput.value = shortLabel;
+        cameras[id].name = shortLabel;
+      }
+      // Frissítjük az alsó label-t is
+      const camLabel = document.getElementById('camLabel_' + id);
+      if (camLabel) camLabel.textContent = '📷 ' + label;
+    }
+  } catch(e) {
+    alert('Kamera hiba (' + (cam.name) + '): ' + e.message);
+    return;
+  }
+
+  // UI frissítés
+  document.getElementById('dot_' + id).className = 'card-dot live';
+  document.getElementById('dotText_' + id).textContent = 'LIVE';
+  document.getElementById('dotText_' + id).style.color = 'var(--ok)';
+  document.getElementById('prog_' + id).classList.add('running');
+  document.getElementById('scan_' + id).classList.add('active');
+
+  // Start gomb → Stop gomb
+  const startBtn = document.getElementById('startBtn_' + id);
+  startBtn.textContent = '■ STOP';
+  startBtn.className = 'btn-cam-stop';
+  startBtn.onclick = () => stopCamera(id);
+  document.getElementById('sel_' + id).disabled = true;
+
+  // Azonnali elemzés, majd 2 másodpercenként
+  analyzeCamera(id);
+  cam.interval = setInterval(() => {
+    if (!cam.analyzing) analyzeCamera(id);
+  }, INTERVAL_MS);
+
+  updateSidePanel();
+}
+
+// ── Kamera leállítás ──
+function stopCamera(id) {
+  const cam = cameras[id];
+  if (!cam) return;
+
+  clearInterval(cam.interval);
+  cam.interval = null;
+  if (cam.stream) { cam.stream.getTracks().forEach(t => t.stop()); cam.stream = null; }
+
+  const video = document.getElementById('video_' + id);
+  if (video) { video.srcObject = null; video.style.display = 'none'; }
+  document.getElementById('placeholder_' + id).style.display = '';
+  document.getElementById('dot_' + id).className = 'card-dot';
+  document.getElementById('dotText_' + id).textContent = 'OFF';
+  document.getElementById('dotText_' + id).style.color = 'var(--dim)';
+  document.getElementById('prog_' + id).classList.remove('running');
+  document.getElementById('scan_' + id).classList.remove('active');
+  document.getElementById('alertOv_' + id).classList.remove('visible');
+  document.getElementById('card_' + id).className = 'cam-card';
+  document.getElementById('verdict_' + id).className = 'verdict-mini neutral';
+  document.getElementById('verdict_' + id).textContent = '— LEÁLLÍTVA';
+  document.getElementById('conf_' + id).textContent = '—';
+  document.getElementById('desc_' + id).textContent = 'Kamera leállítva.';
+
+  const startBtn = document.getElementById('startBtn_' + id);
+  if (startBtn) {
+    startBtn.textContent = '▶ START';
+    startBtn.className = 'btn-cam-start';
+    startBtn.onclick = () => startCamera(id);
+    document.getElementById('sel_' + id).disabled = false;
+  }
+
+  cam.result = null;
+  updateGlobalAlert();
+  updateSidePanel();
+}
+
+// ── Kamera eltávolítása ──
+function removeCamera(id) {
+  stopCamera(id);
+  delete cameras[id];
+  const card = document.getElementById('card_' + id);
+  if (card) card.remove();
+
+  // Ha üres, mutasd az empty state-et
+  if (Object.keys(cameras).length === 0) {
+    const grid = document.getElementById('camGrid');
+    const empty = document.createElement('div');
+    empty.className = 'empty-state'; empty.id = 'emptyState';
+    empty.innerHTML = '<div class="big">📷</div><p>Nincs még kamera hozzáadva.<br>Kattints a "+ KAMERA HOZZÁADÁSA" gombra<br>a jobb felső sarokban.</p>';
+    grid.appendChild(empty);
+  }
+  updateSidePanel();
+}
+
+// ── Képkeret rögzítés ──
+function captureFrame(id) {
+  const video = document.getElementById('video_' + id);
+  const cap = document.getElementById('hiddenCap');
+  cap.width = video.videoWidth || 640;
+  cap.height = video.videoHeight || 480;
+  const ctx = cap.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+  return cap.toDataURL('image/jpeg', 0.8).split(',')[1];
+}
+
+// ── Elemzés ──
+async function analyzeCamera(id) {
+  const cam = cameras[id];
+  if (!cam || !cam.stream || cam.analyzing) return;
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) return;
+
+  cam.analyzing = true;
+
+  let imageData;
+  try { imageData = captureFrame(id); }
+  catch(e) { cam.analyzing = false; return; }
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-5',
+        max_tokens: 200,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData } },
+            { type: 'text', text: `Te egy szigorú ipari minőségellenőrző rendszer vagy, amely raklapon lévő pántszalagokat vizsgál.
+
+FELADATOD: Keresd meg a pántszalagot a képen (bárhol lehet), és ellenőrizd az állapotát.
+
+HIBA fennáll, ha BÁRMELYIK igaz:
+- A pántszalag spirálisan fel van csavarva / csavarodott (még részben is)
+- A pántszalag keresztbe van fektetve, X alakot mutat
+- A pántszalag laza, lelóg, nem feszített
+- A pántszalag hiányzik a raklapról
+- A pántszalag szakadt vagy sérült
+- A pántszalag nem síkban fekszik
+
+OK CSAK akkor, ha EGYÉRTELMŰEN egyenletesen feszített és síkban fekszik.
+
+FONTOS: Ha bármilyen kétséged van → HIBA. Ne legyél elnéző!
+
+Válaszolj CSAK JSON-ban:
+{"lathato":true/false,"allapot":"OK"/"HIBA","bizonyossag":0-100,"leiras":"max 10 szó magyarul"}` }
+          ]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const raw = data.content[0].text.trim();
+    let result;
+    try {
+      const m = raw.match(/\{[\s\S]*\}/);
+      result = JSON.parse(m[0]);
+      if (result.allapot === 'BIZONYTALAN' || !result.allapot) {
+        result.allapot = 'HIBA';
+        result.leiras = (result.leiras || 'Bizonytalan') + ' → ellenőrizd!';
+      }
+    } catch {
+      result = { lathato: true, allapot: 'HIBA', bizonyossag: 40, leiras: 'Elemzési hiba – ellenőrizd!' };
+    }
+
+    cam.result = result;
+    applyCardResult(id, result);
+
+  } catch(e) {
+    cam.result = { lathato: true, allapot: 'HIBA', bizonyossag: 0, leiras: 'API hiba' };
+    applyCardResult(id, cam.result);
+  }
+
+  cam.analyzing = false;
+}
+
+// ── Kártya frissítése ──
+function applyCardResult(id, result) {
+  const cam = cameras[id];
+  const card = document.getElementById('card_' + id);
+  const verdictEl = document.getElementById('verdict_' + id);
+  const confEl = document.getElementById('conf_' + id);
+  const descEl = document.getElementById('desc_' + id);
+  const alertOv = document.getElementById('alertOv_' + id);
+  const dot = document.getElementById('dot_' + id);
+  const dotText = document.getElementById('dotText_' + id);
+  if (!card) return;
+
+  const conf = result.bizonyossag || 0;
+
+  // Statisztika
+  cam.stats.total++;
+  globalStats.total++;
+  if (result.allapot === 'OK') { cam.stats.ok++; globalStats.ok++; }
+  else { cam.stats.warn++; globalStats.warn++; }
+
+  // Előzmény
+  const now = new Date();
+  const ts = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0') + ':' + now.getSeconds().toString().padStart(2,'0');
+  globalHistory.unshift({ ts, camName: cam.name, allapot: result.allapot, conf });
+  if (globalHistory.length > 30) globalHistory.pop();
+
+  if (!result.lathato) {
+    card.className = 'cam-card';
+    alertOv.classList.remove('visible');
+    dot.className = 'card-dot live';
+    verdictEl.className = 'verdict-mini neutral';
+    verdictEl.textContent = '? NEM LÁTHATÓ';
+    confEl.textContent = conf + '%';
+    descEl.textContent = result.leiras || 'Pántszalag nem azonosítható';
+
+  } else if (result.allapot === 'OK') {
+    card.className = 'cam-card ok-state';
+    alertOv.classList.remove('visible');
+    dot.className = 'card-dot live';
+    dotText.textContent = 'LIVE'; dotText.style.color = 'var(--ok)';
+    verdictEl.className = 'verdict-mini ok';
+    verdictEl.textContent = '✓ RENDBEN';
+    confEl.textContent = conf + '%';
+    descEl.textContent = result.leiras || 'Megfelelően rögzítve';
+
+  } else {
+    card.className = 'cam-card warn-state';
+    alertOv.classList.add('visible');
+    dot.className = 'card-dot warn';
+    dotText.textContent = 'HIBA'; dotText.style.color = 'var(--warn)';
+    verdictEl.className = 'verdict-mini warn';
+    verdictEl.textContent = '⚠ HIBA';
+    confEl.textContent = conf + '%';
+    descEl.textContent = result.leiras || 'Problémás pántszalag';
+    beep();
+  }
+
+  updateGlobalAlert();
+  updateSidePanel();
+  updateGlobalStats();
+}
+
+// ── Globális riasztás ──
+function updateGlobalAlert() {
+  const hibas = Object.entries(cameras)
+    .filter(([id, cam]) => cam.result && cam.result.allapot === 'HIBA' && cam.stream)
+    .map(([id, cam]) => cam.name);
+
+  const banner = document.getElementById('alertBanner');
+  if (hibas.length > 0) {
+    banner.classList.add('visible');
+    document.getElementById('alertBannerText').textContent = '⚠ HIBA: ' + hibas.join(', ');
+    document.body.classList.add('alerting');
+  } else {
+    banner.classList.remove('visible');
+    document.body.classList.remove('alerting');
+  }
+}
+
+// ── Oldalsó panel frissítése ──
+function updateSidePanel() {
+  // Kamera státusz lista
+  const list = document.getElementById('camStatusList');
+  const ids = Object.keys(cameras);
+  if (ids.length === 0) {
+    list.innerHTML = '<p style="font-size:11px;color:var(--dim);font-family:\'Share Tech Mono\',monospace">Nincs kamera.</p>';
+  } else {
+    list.innerHTML = ids.map(id => {
+      const cam = cameras[id];
+      const hasStream = !!cam.stream;
+      const res = cam.result;
+      let dotCls = 'off', stateCls = 'off', stateText = 'OFF';
+      if (hasStream && res) {
+        if (res.allapot === 'OK') { dotCls = 'ok'; stateCls = 'ok'; stateText = 'OK'; }
+        else { dotCls = 'warn'; stateCls = 'warn'; stateText = 'HIBA'; }
+      } else if (hasStream) {
+        dotCls = 'ok'; stateCls = 'off'; stateText = 'LIVE';
+      }
+      return `<div class="csl-item">
+        <div class="csl-dot ${dotCls}"></div>
+        <span class="csl-name">${cam.name}</span>
+        <span class="csl-state ${stateCls}">${stateText}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Előzmények
+  const hList = document.getElementById('historyList');
+  if (globalHistory.length === 0) {
+    hList.innerHTML = '<p style="font-size:11px;color:var(--dim);font-family:\'Share Tech Mono\',monospace">Nincs adat.</p>';
+  } else {
+    hList.innerHTML = globalHistory.slice(0, 25).map(h => {
+      const cls = h.allapot === 'OK' ? 'ok' : 'warn';
+      return `<div class="hi-item">
+        <span class="hi-time">${h.ts}</span>
+        <span class="hi-cam">${h.camName}</span>
+        <span class="hi-status ${cls}">${h.allapot}</span>
+      </div>`;
+    }).join('');
+  }
+}
+
+function updateGlobalStats() {
+  document.getElementById('gTotal').textContent = globalStats.total;
+  document.getElementById('gOk').textContent = globalStats.ok;
+  document.getElementById('gWarn').textContent = globalStats.warn;
+  const rate = globalStats.total > 0 ? Math.round((globalStats.warn / globalStats.total) * 100) + '%' : '—';
+  document.getElementById('gRate').textContent = rate;
+}
+
+// ── Diagnosztika ──
+async function diagnosztika() {
+  let msg = '=== KAMERA DIAGNOSZTIKA ===\n\n';
+  try {
+    // Engedély kérés
+    const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    const label = tmp.getVideoTracks()[0]?.label || '?';
+    msg += '✓ Kamera engedély megadva\n';
+    msg += 'Aktív kamera: ' + label + '\n\n';
+    tmp.getTracks().forEach(t => t.stop());
+
+    // Eszközök listázása
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const vids = devs.filter(d => d.kind === 'videoinput');
+    msg += 'Talált videó eszközök: ' + vids.length + '\n';
+    vids.forEach((d, i) => {
+      msg += '  ' + (i+1) + '. Label: "' + (d.label || 'ÜRES') + '"\n';
+      msg += '     DeviceId: ' + d.deviceId.substring(0, 20) + '...\n';
+      msg += '     GroupId: ' + (d.groupId || '?').substring(0, 20) + '\n';
+    });
+
+    // Ha csak 1 eszközt talál, megpróbáljuk direct megnyitni a másodikat
+    if (vids.length < 2) {
+      msg += '\n⚠ Csak 1 kamera látható! Próbálom direct megnyitni...\n';
+      // Chrome-ban a második kamera néha csak így érhető el:
+      try {
+        const s2 = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: 'environment' } } });
+        msg += '✓ "environment" kamera megnyílt: ' + s2.getVideoTracks()[0]?.label + '\n';
+        s2.getTracks().forEach(t => t.stop());
+      } catch(e) { msg += '  environment: ' + e.message + '\n'; }
+    }
+
+  } catch(e) {
+    msg += '✗ Hiba: ' + e.message + '\n';
+  }
+  alert(msg);
+}
+</script>
+</body>
+</html>
